@@ -5,7 +5,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-gnavi_shibuya.json
 *.db
 
 .DS_Store
