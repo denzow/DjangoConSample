@@ -17,6 +17,9 @@ from django.db.migrations.state import ProjectState
 from django.db.migrations.utils import get_migration_name_timestamp
 from django.db.migrations.writer import MigrationWriter
 
+from logging import getLogger
+logger = getLogger('django_con')
+
 
 class Command(BaseCommand):
     help = "Creates new migration(s) for apps."
@@ -60,7 +63,7 @@ class Command(BaseCommand):
         self.migration_name = options['name']
         check_changes = options['check_changes']
 
-        # Make sure the app they asked for exists
+        # @@ makemigrationsに指定されたappがある場合はそれが存在するかのチェック
         app_labels = set(app_labels)
         bad_app_labels = set()
         for app_label in app_labels:
@@ -73,8 +76,10 @@ class Command(BaseCommand):
                 self.stderr.write("App '%s' could not be found. Is it in INSTALLED_APPS?" % app_label)
             sys.exit(2)
 
-        # Load the current graph state. Pass in None for the connection so
-        # the loader doesn't try to resolve replaced migrations from DB.
+        # @@ マイグレーションファイルからステートを構成する
+        # connection=NoneにしているのでDBは見ない
+        # コンストラクタの中でbuild_graphが呼ばれる
+        # ローカルのマイグレーションファイルを読み込んでグラフを構成する
         loader = MigrationLoader(None, ignore_no_migrations=True)
 
         # Raise an error if any migrations are applied before their dependencies.
@@ -93,15 +98,19 @@ class Command(BaseCommand):
 
         # Before anything else, see if there's conflicting apps and drop out
         # hard if there are any and they don't want to merge
+        # @@ マイグレーションファイルのコンフリクトチェック
+        # 同じAppで複数のリーフが存在していないかを見ている
         conflicts = loader.detect_conflicts()
 
-        # If app_labels is specified, filter out conflicting migrations for unspecified apps
+        # @@ app_labelがある場合はそのアプリだけチェックする
         if app_labels:
             conflicts = {
                 app_label: conflict for app_label, conflict in conflicts.items()
                 if app_label in app_labels
             }
 
+        # @@ コンフリクトがあったときの通常対応
+        # mergeを指定しない限り、同じAppでリーフが複数の場合はmergeの実行を促して終了する
         if conflicts and not self.merge:
             name_str = "; ".join(
                 "%s in %s" % (", ".join(names), app)
@@ -118,8 +127,8 @@ class Command(BaseCommand):
             self.stdout.write("No conflicts detected to merge.")
             return
 
-        # If they want to merge and there is something to merge, then
-        # divert into the merge code
+        # @@ merge action
+        # --mergeを指定していればconflict解決のためのMergeを実行する
         if self.merge and conflicts:
             return self.handle_merge(loader, conflicts)
 
@@ -127,14 +136,20 @@ class Command(BaseCommand):
             questioner = InteractiveMigrationQuestioner(specified_apps=app_labels, dry_run=self.dry_run)
         else:
             questioner = NonInteractiveMigrationQuestioner(specified_apps=app_labels, dry_run=self.dry_run)
-        # Set up autodetector
+
+        # @@ マイグレーション計算の肝であるDetectorを生成
+        # loader.project_state -> Migrationファイルから計算したState
+        # ProjectState.from_apps(apps) -> 現在のプロジェクトの状態から求めたState
+        # MigrationAutodetectorは両者の差分を元にマイグレーションファイルを生成する機能をもつ
+        # MigrationAutodetectorをここで初期化する
         autodetector = MigrationAutodetector(
             loader.project_state(),
             ProjectState.from_apps(apps),
             questioner,
         )
+        logger.debug(autodetector)
 
-        # If they want to make an empty migration, make one for each app
+        # @@ --empty指定時の処理
         if self.empty:
             if not app_labels:
                 raise CommandError("You must supply at least one app label when using --empty.")

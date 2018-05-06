@@ -2,6 +2,18 @@
 import os
 import sys
 
+
+from logging import getLogger, Formatter, StreamHandler, DEBUG
+logger = getLogger('django_con')
+formatter = Formatter('%(asctime)s - %(filename)s:%(lineno)s - %(message)s')
+handler = StreamHandler()
+handler.setLevel(DEBUG)
+handler.setFormatter(formatter)
+logger.setLevel(DEBUG)
+logger.addHandler(handler)
+
+
+
 if __name__ == "__main__":
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "myproj.settings")
     try:
