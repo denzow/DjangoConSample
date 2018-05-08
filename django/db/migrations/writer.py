@@ -11,6 +11,8 @@ from django.utils.inspect import get_func_args
 from django.utils.module_loading import module_dir
 from django.utils.timezone import now
 
+from logging import getLogger
+logger = getLogger('django_con')
 
 class SettingsReference(str):
     """
@@ -148,7 +150,11 @@ class MigrationWriter:
         # Deconstruct operations
         operations = []
         for operation in self.migration.operations:
+            logger.debug('operation {}'.format(operation))
+            # @@ Operation単位でコマンドに変換
             operation_string, operation_imports = OperationWriter(operation).serialize()
+            logger.debug('operation_string, operation_imports {} {}'.format(operation_string, operation_imports))
+            # @@ importsは一回やればいいからsetになっている
             imports.update(operation_imports)
             operations.append(operation_string)
         items["operations"] = "\n".join(operations) + "\n" if operations else ""

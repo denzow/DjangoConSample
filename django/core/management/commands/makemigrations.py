@@ -103,6 +103,7 @@ class Command(BaseCommand):
         conflicts = loader.detect_conflicts()
 
         # @@ app_labelがある場合はそのアプリだけチェックする
+        # 厳密には結果からapp_labelに該当しないものを取り除く
         if app_labels:
             conflicts = {
                 app_label: conflict for app_label, conflict in conflicts.items()
@@ -166,14 +167,17 @@ class Command(BaseCommand):
             self.write_migration_files(changes)
             return
 
-        # Detect changes
+        # @@ migrationの計算
+        # {'app1': [<Migration app1.0002_book_author>]}
         changes = autodetector.changes(
             graph=loader.graph,
             trim_to_apps=app_labels or None,
             convert_apps=app_labels or None,
             migration_name=self.migration_name,
         )
-
+        logger.debug(loader.graph.nodes)
+        logger.debug(loader.graph.node_map)
+        logger.debug(changes)
         if not changes:
             # No changes? Tell them.
             if self.verbosity >= 1:
@@ -185,6 +189,7 @@ class Command(BaseCommand):
                 else:
                     self.stdout.write("No changes detected")
         else:
+            # @@ マイグレーションファイルの作成
             self.write_migration_files(changes)
             if check_changes:
                 sys.exit(1)
@@ -195,11 +200,15 @@ class Command(BaseCommand):
         """
         directory_created = {}
         for app_label, app_migrations in changes.items():
+            # @@ app1 [<Migration app1.0002_book_author>]
+            logger.debug('write_migration_files {} {}'.format(app_label, app_migrations))
             if self.verbosity >= 1:
                 self.stdout.write(self.style.MIGRATE_HEADING("Migrations for '%s':" % app_label) + "\n")
             for migration in app_migrations:
                 # Describe the migration
+                # @@ Migrationから書き出し用のMigrationWriterを取得する
                 writer = MigrationWriter(migration)
+                # @@ migration_stringを使いまわしてるのは少し気持ち悪い・・
                 if self.verbosity >= 1:
                     # Display a relative path if it's below the current working
                     # directory, or an absolute path otherwise.
@@ -224,6 +233,7 @@ class Command(BaseCommand):
                         # We just do this once per app
                         directory_created[app_label] = True
                     migration_string = writer.as_string()
+                    # @@ 実際にマイグレーションファイルを書き出す
                     with open(writer.path, "w", encoding='utf-8') as fh:
                         fh.write(migration_string)
                 elif self.verbosity == 3:

@@ -16,6 +16,10 @@ from django.db.migrations.utils import (
 from .topological_sort import stable_topological_sort
 
 
+from logging import getLogger
+logger = getLogger('django_con')
+
+
 class MigrationAutodetector:
     """
     Take a pair of ProjectStates and compare them to see what the first would
@@ -41,10 +45,16 @@ class MigrationAutodetector:
         Take a graph to base names on and an optional set of apps
         to try and restrict to (restriction is not guaranteed)
         """
+        logger.debug('changes {} {} {}'.format(trim_to_apps, convert_apps, migration_name))
         changes = self._detect_changes(convert_apps, graph)
+        logger.debug(changes)
+        # @@ マイグレーションファイル名の調整等
         changes = self.arrange_for_graph(changes, graph, migration_name)
+        logger.debug(changes)
+        # @@ app_labelが指定されている場合はそれ以外のChangeを捨てる
         if trim_to_apps:
             changes = self._trim_to_apps(changes, trim_to_apps)
+        logger.debug(changes)
         return changes
 
     def deep_deconstruct(self, obj):
@@ -156,6 +166,7 @@ class MigrationAutodetector:
                 else:
                     self.new_model_keys.add((al, mn))
 
+        # @@ マイグレーションの検知処理
         # Renames have to come first
         self.generate_renamed_models()
 
@@ -826,7 +837,13 @@ class MigrationAutodetector:
 
     def generate_added_fields(self):
         """Make AddField operations."""
+        # @@ 既存のフィールドとの差分を取って列追加を検知する
+        # ('app1', 'book', 'author') のような形式
+        logger.debug('old_field_keys {}'.format(self.old_field_keys))
+        logger.debug('new_filed_keys {}'.format(self.new_field_keys))
+        logger.debug('diff  {}'.format(sorted(self.new_field_keys - self.old_field_keys)))
         for app_label, model_name, field_name in sorted(self.new_field_keys - self.old_field_keys):
+            logger.debug('generate_added_fields {} {} {}'.format(app_label, model_name, field_name))
             self._generate_added_field(app_label, model_name, field_name)
 
     def _generate_added_field(self, app_label, model_name, field_name):

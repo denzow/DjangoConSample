@@ -198,6 +198,49 @@ django.db.migrations.autodetector.MigrationAutodetector#_detect_changes
         self.generate_altered_order_with_respect_to()
 ```
 
+```
+
+    def _detect_changes(self, convert_apps=None, graph=None):
+    :
+        for al, mn in self.from_state.models:
+            model = self.old_apps.get_model(al, mn)
+            if not model._meta.managed:
+                self.old_unmanaged_keys.add((al, mn))
+            elif al not in self.from_state.real_apps:
+                if model._meta.proxy:
+                    self.old_proxy_keys.add((al, mn))
+                else:
+                    self.old_model_keys.add((al, mn))
+
+        for al, mn in self.to_state.models:
+            model = self.new_apps.get_model(al, mn)
+            if not model._meta.managed:
+                self.new_unmanaged_keys.add((al, mn))
+            elif (
+                al not in self.from_state.real_apps or
+                (convert_apps and al in convert_apps)
+            ):
+                if model._meta.proxy:
+                    self.new_proxy_keys.add((al, mn))
+                else:
+                    self.new_model_keys.add((al, mn))
+```
+
+```
+    def generate_added_fields(self):
+        """Make AddField operations."""
+        # @@ 既存のフィールドとの差分を取って列追加を検知する
+        # ('app1', 'book', 'author') のような形式
+        logger.debug('old_field_keys {}'.format(self.old_field_keys))
+        logger.debug('new_filed_keys {}'.format(self.new_field_keys))
+        logger.debug('diff  {}'.format(sorted(self.new_field_keys - self.old_field_keys)))
+        for app_label, model_name, field_name in sorted(self.new_field_keys - self.old_field_keys):
+            logger.debug('generate_added_fields {} {} {}'.format(app_label, model_name, field_name))
+            self._generate_added_field(app_label, model_name, field_name)
+
+```
+
+
 django.db.migrations.writer.MigrationWriter
 
 でMigrationを元にマイグレーションファイルを作成する
