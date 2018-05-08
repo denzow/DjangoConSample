@@ -8,6 +8,9 @@ from django.core.exceptions import ImproperlyConfigured
 from django.utils.functional import cached_property
 from django.utils.module_loading import import_string
 
+from logging import getLogger
+logger = getLogger('django_con')
+
 DEFAULT_DB_ALIAS = 'default'
 DJANGO_VERSION_PICKLE_KEY = '_django_version'
 
@@ -107,10 +110,14 @@ def load_backend(backend_name):
         backend_name = 'django.db.backends.postgresql'
 
     try:
+        logger.debug('import_module {}'.format('%s.base' % backend_name))
         return import_module('%s.base' % backend_name)
     except ImportError as e_user:
         # The database backend wasn't found. Display a helpful error message
         # listing all built-in database backends.
+        # @@ django/db/backends 配下を列挙することで使用可能なドライバを列挙している
+        # contribとかは含まれない
+        # django.contrib.gis.db.backends.postgis.base.DatabaseWrapper
         backend_dir = str(Path(__file__).parent / 'backends')
         builtin_backends = [
             name for _, name, ispkg in pkgutil.iter_modules([backend_dir])
@@ -199,8 +206,13 @@ class ConnectionHandler:
         self.ensure_defaults(alias)
         self.prepare_test_settings(alias)
         db = self.databases[alias]
+        # @@ DBに応じたドライバクラスをimportする
+        # i.e. django.db.backends.sqlite3.base
         backend = load_backend(db['ENGINE'])
         conn = backend.DatabaseWrapper(db, alias)
+        # @@
+        # dbは設定のDict, aliasは設定名(default)
+        logger.debug('conn, db, alias {} {} {}'.format(conn, db, alias))
         setattr(self._connections, alias, conn)
         return conn
 

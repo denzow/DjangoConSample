@@ -15,6 +15,9 @@ from django.db.migrations.loader import AmbiguityError
 from django.db.migrations.state import ModelState, ProjectState
 from django.utils.module_loading import module_has_submodule
 
+from logging import getLogger
+logger = getLogger('django_con')
+
 
 class Command(BaseCommand):
     help = "Updates database schema. Manages both apps with migrations and those without."
@@ -63,17 +66,30 @@ class Command(BaseCommand):
         self.verbosity = options['verbosity']
         self.interactive = options['interactive']
 
+        # @@ TODO あとで。
         # Import the 'management' module within each installed app, to register
         # dispatcher events.
         for app_config in apps.get_app_configs():
             if module_has_submodule(app_config.module, "management"):
                 import_module('.management', app_config.name)
 
-        # Get the database we're operating from
+        logger.debug('options {}'.format(options))
+        # @@ 普通は`default`が入っている
         db = options['database']
+        # @@ 対応するDBへのコネクションラッパを取得する
+        # ConnectionHandler().__getitem__(db)
+        # django.db.backends.sqlite3.base.DatabaseWrapper が戻る
         connection = connections[db]
+        logger.debug('connection {}'.format(connection))
 
-        # Hook for backends needing any database preparation
+        # @@ sqlite3では未実装なのでpass
+        # 実際のところgisだけっぽい
+        # postgisのbaseより。
+        #     def prepare_database(self):
+        #         super().prepare_database()
+        #         # Check that postgis extension is installed.
+        #         with self.cursor() as cursor:
+        #             cursor.execute("CREATE EXTENSION IF NOT EXISTS postgis")
         connection.prepare_database()
         # Work out which apps have migrations and which do not
         executor = MigrationExecutor(connection, self.migration_progress_callback)
