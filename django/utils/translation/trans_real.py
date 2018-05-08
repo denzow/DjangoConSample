@@ -122,7 +122,7 @@ class DjangoTranslation(gettext_module.GNUTranslations):
             self._add_installed_apps_translations()
 
         self._add_local_translations()
-        if self.__language == settings.LANGUAGE_CODE and self.domain == 'django' and self._catalog is None:
+        if self.__language == settings.LANGUAGE_CODE and self.domain == 'django_avoid' and self._catalog is None:
             # default lang should have at least one translation file available.
             raise IOError("No translation files found for default language %s." % settings.LANGUAGE_CODE)
         self._add_fallback(localedirs)
