@@ -67,6 +67,7 @@ class Command(BaseCommand):
         self.interactive = options['interactive']
 
         # @@ TODO あとで。
+        # managementを読んで何をしているのか。
         # Import the 'management' module within each installed app, to register
         # dispatcher events.
         for app_config in apps.get_app_configs():
@@ -91,10 +92,18 @@ class Command(BaseCommand):
         #         with self.cursor() as cursor:
         #             cursor.execute("CREATE EXTENSION IF NOT EXISTS postgis")
         connection.prepare_database()
+
         # Work out which apps have migrations and which do not
+        # @@ executorの取得
+        # migration_progress_callbackは進捗をstdoutにいい感じにだすための処理
+        # DBから状態を取り出し、適用をするクラス
         executor = MigrationExecutor(connection, self.migration_progress_callback)
 
         # Raise an error if any migrations are applied before their dependencies.
+        # @@
+        # executor.loaderはMigrationLoader
+        # 適用済マイグレーションのツリーの一貫性チェック
+        # 適用されているマイグレーションのparentがgraph.nodesにあるかを見ている
         executor.loader.check_consistent_history(connection)
 
         # Before anything else, see if there's conflicting apps and drop out

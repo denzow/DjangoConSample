@@ -11,6 +11,9 @@ from .exceptions import (
     AmbiguityError, BadMigrationError, InconsistentMigrationHistory,
     NodeNotFoundError,
 )
+from logging import getLogger
+logger = getLogger('django_con')
+
 
 MIGRATIONS_MODULE_NAME = 'migrations'
 
@@ -41,6 +44,7 @@ class MigrationLoader:
     """
 
     def __init__(self, connection, load=True, ignore_no_migrations=False):
+        logger.debug('init {}'.format(self.__class__.__name__))
         self.connection = connection
         self.disk_migrations = None
         self.applied_migrations = None
@@ -211,6 +215,9 @@ class MigrationLoader:
         # and their dependencies. Also make note of replacing migrations at this step.
         self.graph = MigrationGraph()
         self.replacements = {}
+        logger.debug('applied_migrations {}'.format(self.applied_migrations))
+        logger.debug('disk_migrations {}'.format(self.disk_migrations))
+
         for key, migration in self.disk_migrations.items():
             self.graph.add_node(key, migration)
             # Internal (aka same-app) dependencies.
@@ -281,9 +288,11 @@ class MigrationLoader:
             if migration not in self.graph.nodes:
                 continue
             for parent in self.graph.node_map[migration].parents:
+                logger.debug('migration:{} parent:{} replacements:{}'.format(migration, parent, self.replacements))
                 if parent not in applied:
                     # Skip unapplied squashed migrations that have all of their
                     # `replaces` applied.
+                    # @@ ここはまぁ無視できる
                     if parent in self.replacements:
                         if all(m in applied for m in self.replacements[parent].replaces):
                             continue

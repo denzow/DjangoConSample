@@ -5,7 +5,7 @@ import sys
 
 from logging import getLogger, Formatter, StreamHandler, DEBUG
 logger = getLogger('django_con')
-formatter = Formatter('%(asctime)s - %(filename)s:%(lineno)s - %(message)s')
+formatter = Formatter('%(asctime)s - %(filename)s:%(lineno)s[%(funcName)s] - %(message)s')
 handler = StreamHandler()
 handler.setLevel(DEBUG)
 handler.setFormatter(formatter)
@@ -24,5 +24,4 @@ if __name__ == "__main__":
             "available on your PYTHONPATH environment variable? Did you "
             "forget to activate a virtual environment?"
         ) from exc
-    print(sys.argv)
     execute_from_command_line(sys.argv)

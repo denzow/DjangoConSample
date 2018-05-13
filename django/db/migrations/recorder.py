@@ -5,6 +5,9 @@ from django.utils.timezone import now
 
 from .exceptions import MigrationSchemaMissing
 
+from logging import getLogger
+logger = getLogger('django_con')
+
 
 class MigrationRecorder:
     """

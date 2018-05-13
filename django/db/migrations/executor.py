@@ -6,6 +6,9 @@ from .loader import MigrationLoader
 from .recorder import MigrationRecorder
 from .state import ProjectState
 
+from logging import getLogger
+logger = getLogger('django_con')
+
 
 class MigrationExecutor:
     """
@@ -15,8 +18,16 @@ class MigrationExecutor:
 
     def __init__(self, connection, progress_callback=None):
         self.connection = connection
+        # @@ makemigrationでも使っているローダ
+        # connectionを渡しているのでDBから読み込まれる
+        # Stateを作るため.今回はDBのMigrateテーブルから取得している
+        # Loaderの中でもRecorder使ってるけど
         self.loader = MigrationLoader(self.connection)
+        # @@ Recorder
+        # 適用済のMigrationをDBに永続化する
+        # Migrationというモデルをもっていて、ORM経由でそこにしまっている
         self.recorder = MigrationRecorder(self.connection)
+        # 進捗管理の関数
         self.progress_callback = progress_callback
 
     def migration_plan(self, targets, clean_start=False):
