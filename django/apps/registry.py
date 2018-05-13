@@ -9,6 +9,9 @@ from django.core.exceptions import AppRegistryNotReady, ImproperlyConfigured
 
 from .config import AppConfig
 
+from logging import getLogger
+logger = getLogger('django_con')
+
 
 class Apps:
     """
@@ -194,8 +197,11 @@ class Apps:
         if model_name is None:
             app_label, model_name = app_label.split('.')
 
+        logger.debug('get_model for {} {}'.format(app_label, model_name))
+        # @@django.db.migrations.state.AppConfigStub
+        # django.db.migrations.state.AppConfigStub
         app_config = self.get_app_config(app_label)
-
+        logger.debug('{} {} {}'.format(app_config, type(app_config), app_config.models))
         if not require_ready and app_config.models is None:
             app_config.import_models()
 

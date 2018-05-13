@@ -564,6 +564,7 @@ class ModelState:
         except LookupError:
             raise InvalidBasesError("Cannot resolve one or more bases from %r" % (self.bases,))
         # Turn fields into a dict for the body, add other bits
+        # @@ ここでAppConfigStub.get_modelsのFakeが生まれている
         body = {name: field.clone() for name, field in self.fields}
         body['Meta'] = meta
         body['__module__'] = "__fake__"
@@ -571,6 +572,15 @@ class ModelState:
         # Restore managers
         body.update(self.construct_managers())
         # Then, make a Model object (apps.register_model is called in __new__)
+        # @@
+        #
+        # In [15]: b = type('Hoge', (), {'a': 1})
+        #
+        # In [16]: b
+        # Out[16]: __main__.Hoge
+        #
+        # In [17]: b.a
+        # Out[17]: 1
         return type(self.name, bases, body)
 
     def get_field_by_name(self, name):
