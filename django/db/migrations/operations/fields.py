@@ -5,6 +5,9 @@ from django.utils.functional import cached_property
 from .base import Operation
 from .utils import is_referenced_by_foreign_key
 
+from logging import getLogger
+logger = getLogger('django_con')
+
 
 class FieldOperation(Operation):
     def __init__(self, model_name, name):
@@ -72,13 +75,20 @@ class AddField(FieldOperation):
         delay = not field.is_relation
         state.reload_model(app_label, self.model_name_lower, delay=delay)
 
+    # @@ 列追加の場合の処理
     def database_forwards(self, app_label, schema_editor, from_state, to_state):
         to_model = to_state.apps.get_model(app_label, self.model_name)
+        # @@ __fake__.Book
+        logger.debug('add filed target model {}'.format(to_model))
+
         if self.allow_migrate_model(schema_editor.connection.alias, to_model):
             from_model = from_state.apps.get_model(app_label, self.model_name)
             field = to_model._meta.get_field(self.name)
             if not self.preserve_default:
                 field.default = self.field.default
+            # @@ ここでSQLを組み立てて実行する
+            # sqlite3 以外は結構デフォルト実装をみてるけど
+            # sqlite3だけやたら複雑
             schema_editor.add_field(
                 from_model,
                 field,

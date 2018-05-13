@@ -2,6 +2,9 @@ from django.db.transaction import atomic
 
 from .exceptions import IrreversibleError
 
+from logging import getLogger
+logger = getLogger('django_con')
+
 
 class Migration:
     """
@@ -114,10 +117,12 @@ class Migration:
             operation.state_forwards(self.app_label, project_state)
             # Run the operation
             atomic_operation = operation.atomic or (self.atomic and operation.atomic is not False)
+            logger.debug('{}: {}'.format(type(operation), operation))
             if not schema_editor.atomic_migration and atomic_operation:
                 # Force a transaction on a non-transactional-DDL backend or an
                 # atomic operation inside a non-atomic migration.
                 with atomic(schema_editor.connection.alias):
+                    # @@ さらに下位のOperationに移譲する
                     operation.database_forwards(self.app_label, schema_editor, old_state, project_state)
             else:
                 # Normal behaviour

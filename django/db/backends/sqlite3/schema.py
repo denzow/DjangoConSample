@@ -8,6 +8,9 @@ from django.db.backends.ddl_references import Statement
 from django.db.transaction import atomic
 from django.db.utils import NotSupportedError
 
+from logging import getLogger
+logger = getLogger('django_con')
+
 
 class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
 
@@ -297,6 +300,7 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         # Special-case implicit M2M tables
         if field.many_to_many and field.remote_field.through._meta.auto_created:
             return self.create_model(field.remote_field.through)
+        logger.debug('{} to {}'.format(model, field))
         self._remake_table(model, create_field=field)
 
     def remove_field(self, model, field):

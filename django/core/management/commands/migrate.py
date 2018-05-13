@@ -104,10 +104,13 @@ class Command(BaseCommand):
         # executor.loaderはMigrationLoader
         # 適用済マイグレーションのツリーの一貫性チェック
         # 適用されているマイグレーションのparentがgraph.nodesにあるかを見ている
+        # どこかで辿りきれなくなっているのはまずいので。どこかで流れが変わっている可能性がある
         executor.loader.check_consistent_history(connection)
 
         # Before anything else, see if there's conflicting apps and drop out
         # hard if there are any
+        # @@ マイグレーションファイルのコンフリクトチェック
+        # 同じAppで複数のリーフが存在していないかを見ている
         conflicts = executor.loader.detect_conflicts()
         if conflicts:
             name_str = "; ".join(
@@ -121,6 +124,9 @@ class Command(BaseCommand):
             )
 
         # If they supplied command line arguments, work out what they mean.
+        # @@ app_labelやmigration_nameの対応
+        # 該当する部分だけをdisk_migrationから取り出す
+        # 未指定なら全部の末端ノードを取り出す
         target_app_labels_only = True
         if options['app_label'] and options['migration_name']:
             app_label, migration_name = options['app_label'], options['migration_name']
@@ -132,6 +138,8 @@ class Command(BaseCommand):
                 targets = [(app_label, None)]
             else:
                 try:
+                    # @@
+                    # migration_nameは前方一致で単一になればなんでもいい
                     migration = executor.loader.get_migration_by_prefix(app_label, migration_name)
                 except AmbiguityError:
                     raise CommandError(
@@ -154,8 +162,19 @@ class Command(BaseCommand):
         else:
             targets = executor.loader.graph.leaf_nodes()
 
+        logger.debug('migration target {}'.format(targets))
+        # @@
+        # 実際に適用すべきマイグレーションを決定する
         plan = executor.migration_plan(targets)
+        logger.debug('plan {}'.format(plan))
+        # @@
+        # https://docs.djangoproject.com/en/2.0/ref/django-admin/#django-admin-migrate
+        # --run-syncdb¶
+        # Allows creating tables for apps without migrations. While this isn’t recommended,
+        # the migrations framework is sometimes too slow on large projects with hundreds of models.
+        # これのためにあるらしい
         run_syncdb = options['run_syncdb'] and executor.loader.unmigrated_apps
+        logger.debug('executor.loader.unmigrated_apps {}'.format(executor.loader.unmigrated_apps))
 
         # Print some useful info
         if self.verbosity >= 1:
@@ -181,8 +200,11 @@ class Command(BaseCommand):
                         % (targets[0][1], targets[0][0])
                     )
 
+        # @@ マイグレーション前のProjectStateを構成する
+        # 恐らく適用済の範囲だけっぽい
         pre_migrate_state = executor._create_project_state(with_applied_migrations=True)
         pre_migrate_apps = pre_migrate_state.apps
+        # @@ TODO 読みきれてない
         emit_pre_migrate_signal(
             self.verbosity, self.interactive, connection.alias, apps=pre_migrate_apps, plan=plan,
         )
@@ -196,10 +218,13 @@ class Command(BaseCommand):
         # Migrate!
         if self.verbosity >= 1:
             self.stdout.write(self.style.MIGRATE_HEADING("Running migrations:"))
+        # @@ 適用するものがなければメッセージ出すだけ
         if not plan:
             if self.verbosity >= 1:
                 self.stdout.write("  No migrations to apply.")
                 # If there's changes that aren't in migrations yet, tell them how to fix it.
+                # @@ これは優しさ
+                # もしmakemigrationsされてない変更があれば警告する
                 autodetector = MigrationAutodetector(
                     executor.loader.project_state(),
                     ProjectState.from_apps(apps),
@@ -220,6 +245,7 @@ class Command(BaseCommand):
         else:
             fake = options['fake']
             fake_initial = options['fake_initial']
+        # @@ migrateを実行する
         post_migrate_state = executor.migrate(
             targets, plan=plan, state=pre_migrate_state.clone(), fake=fake,
             fake_initial=fake_initial,

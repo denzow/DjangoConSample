@@ -34,6 +34,8 @@ class MigrationExecutor:
         """
         Given a set of targets, return a list of (Migration instance, backwards?).
         """
+        # @@
+        # targets=[('admin', '0002_logentry_remove_auto_add'), ('app1', '0002_book_author'), ....]
         plan = []
         if clean_start:
             applied = set()
@@ -41,6 +43,7 @@ class MigrationExecutor:
             applied = set(self.loader.applied_migrations)
         for target in targets:
             # If the target is (app_label, None), that means unmigrate everything
+            # @@ migrate名がないのはそのAppでの初回
             if target[1] is None:
                 for root in self.loader.graph.root_nodes():
                     if root[0] == target[0]:
@@ -50,16 +53,20 @@ class MigrationExecutor:
                                 applied.remove(migration)
             # If the migration is already applied, do backwards mode,
             # otherwise do forwards mode.
+            # @@ すでに適用済の場合
             elif target in applied:
                 # Don't migrate backwards all the way to the target node (that
                 # may roll back dependencies in other apps that don't need to
                 # be rolled back); instead roll back through target's immediate
                 # child(ren) in the same app, and no further.
+                # @@ 子供がいる場合。
+                # このケースはおそらくmigrate指定で実行した場合？通常はリーフノードを取得しているから?
                 next_in_app = sorted(
                     n for n in
                     self.loader.graph.node_map[target].children
                     if n[0] == target[0]
                 )
+                logger.debug('next_in_app {}'.format(next_in_app))
                 for node in next_in_app:
                     for migration in self.loader.graph.backwards_plan(node):
                         if migration in applied:
@@ -67,6 +74,7 @@ class MigrationExecutor:
                             applied.remove(migration)
             else:
                 for migration in self.loader.graph.forwards_plan(target):
+                    logger.debug('forwards_plan {} is applied {}'.format(migration, migration not in applied))
                     if migration not in applied:
                         plan.append((self.loader.graph.nodes[migration], False))
                         applied.add(migration)
@@ -88,6 +96,8 @@ class MigrationExecutor:
             for migration, _ in full_plan:
                 if migration in applied_migrations:
                     migration.mutate_state(state, preserve=False)
+                else:
+                    logger.debug('not applied {}'.format(migration))
         return state
 
     def migrate(self, targets, plan=None, state=None, fake=False, fake_initial=False):
@@ -97,8 +107,13 @@ class MigrationExecutor:
         Django first needs to create all project states before a migration is
         (un)applied and in a second step run all the database operations.
         """
+        logger.debug('start migrate')
+        logger.debug('targets, plan, state {} {} {}'.format(targets, plan, state))
+        logger.debug('fake, fake_initial {} {}'.format(fake, fake_initial))
+
         # The django_migrations table must be present to record applied
         # migrations.
+        # @@ django_migrationsテーブルの存在チェック
         self.recorder.ensure_schema()
 
         if plan is None:
@@ -110,10 +125,12 @@ class MigrationExecutor:
         all_backwards = all(backwards for mig, backwards in plan)
 
         if not plan:
+            logger.debug('not plan')
             if state is None:
                 # The resulting state should include applied migrations.
                 state = self._create_project_state(with_applied_migrations=True)
         elif all_forwards == all_backwards:
+            logger.debug('all_forwards == all_backwards')
             # This should only happen if there's a mixed plan
             raise InvalidMigrationPlan(
                 "Migration plans with both forwards and backwards migrations "
@@ -122,11 +139,15 @@ class MigrationExecutor:
                 plan
             )
         elif all_forwards:
+            logger.debug('all_forwards')
             if state is None:
+                logger.debug('state create')
                 # The resulting state should still include applied migrations.
                 state = self._create_project_state(with_applied_migrations=True)
+            # @@ migrate実行
             state = self._migrate_all_forwards(state, plan, full_plan, fake=fake, fake_initial=fake_initial)
         else:
+            logger.debug('else')
             # No need to check for `elif all_backwards` here, as that condition
             # would always evaluate to true.
             state = self._migrate_all_backwards(plan, full_plan, fake=fake)
@@ -155,6 +176,7 @@ class MigrationExecutor:
                     state.apps  # Render all -- performance critical
                     if self.progress_callback:
                         self.progress_callback("render_success")
+                # @@ 各Migrateの実行
                 state = self.apply_migration(state, migration, fake=fake, fake_initial=fake_initial)
                 migrations_to_run.remove(migration)
 
@@ -241,6 +263,7 @@ class MigrationExecutor:
 
     def apply_migration(self, state, migration, fake=False, fake_initial=False):
         """Run a migration forwards."""
+        logger.debug('{} {}'.format(state, migration))
         if self.progress_callback:
             self.progress_callback("apply_start", migration, fake)
         if not fake:
@@ -251,6 +274,10 @@ class MigrationExecutor:
                     fake = True
             if not fake:
                 # Alright, do it normally
+                # @@ ここがメインの処理
+                # sqlite3 ならdjango.db.backends.sqlite3.schema.DatabaseSchemaEditor
+                # migrationを各種DBにあわせてSQLを発行する
+                # 列追加ならmigrations.operations.filed.AddFiled
                 with self.connection.schema_editor(atomic=migration.atomic) as schema_editor:
                     state = migration.apply(state, schema_editor)
         # For replacement migrations, record individual statuses
@@ -258,6 +285,7 @@ class MigrationExecutor:
             for app_label, name in migration.replaces:
                 self.recorder.record_applied(app_label, name)
         else:
+            # @@ 適用済のマイグレーションをdjango_migrationsに記録する
             self.recorder.record_applied(migration.app_label, migration.name)
         # Report progress
         if self.progress_callback:

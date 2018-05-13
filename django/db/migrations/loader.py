@@ -134,13 +134,17 @@ class MigrationLoader:
         """
         # Do the search
         results = []
+        logger.debug('prefix {}'.format(name_prefix))
         for migration_app_label, migration_name in self.disk_migrations:
+            logger.debug('{} {}'.format(migration_app_label, migration_name))
             if migration_app_label == app_label and migration_name.startswith(name_prefix):
                 results.append((migration_app_label, migration_name))
+        # @@ 複数見つかってしまった場合
         if len(results) > 1:
             raise AmbiguityError(
                 "There is more than one migration for '%s' with the prefix '%s'" % (app_label, name_prefix)
             )
+        # @@ 見つからなかった場合
         elif not results:
             raise KeyError("There no migrations for '%s' with the prefix '%s'" % (app_label, name_prefix))
         else:
