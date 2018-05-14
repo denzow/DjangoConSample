@@ -94,6 +94,8 @@ class Command(BaseCommand):
                     for app_label in consistency_check_labels
                     for model in apps.get_app_config(app_label).get_models()
             )):
+                # @@ DBへの接続は発生している
+                logger.debug('check_consistent_history via {}'.format(connection))
                 loader.check_consistent_history(connection)
 
         # Before anything else, see if there's conflicting apps and drop out
