@@ -204,7 +204,8 @@ class Command(BaseCommand):
         # 恐らく適用済の範囲だけっぽい
         pre_migrate_state = executor._create_project_state(with_applied_migrations=True)
         pre_migrate_apps = pre_migrate_state.apps
-        # @@ TODO 読みきれてない
+        # @@ シグナルを投げる
+        # 最終的にinject_rename_contenttypes_operationsが呼ばれる
         emit_pre_migrate_signal(
             self.verbosity, self.interactive, connection.alias, apps=pre_migrate_apps, plan=plan,
         )

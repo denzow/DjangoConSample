@@ -609,3 +609,482 @@ class AddField(FieldOperation):
             kwargs
         )
 ```
+
+### migrate
+#### 流れ
+
+1. `connection = connections[db]`でDBへの接続を取得
+    - prepare_databaseは特に何もしてない
+2. MigrationExecutorで整合性のチェックやファイル指定の判定
+3. MigrationPlanの生成(migration fileのセットやbackwordの判定とか)
+4. マイグレーション前のProjectStateを構成する
+5. マイグレーションの実行
+    - `self._migrate_all_forwards`
+    - `apply_migration`
+6. マイグレーションの実行(2)
+    - SQLの発行
+#### 詳細
+
+
+##### 1. `connection = connections[db]`でDBへの接続を取得
+
+```python
+        # @@ 普通は`default`が入っている
+        db = options['database']
+        # @@ 対応するDBへのコネクションラッパを取得する
+        # ConnectionHandler().__getitem__(db)
+        # django.db.backends.sqlite3.base.DatabaseWrapper が戻る
+        connection = connections[db]
+```
+
+```python
+connections = ConnectionHandler()
+```
+
+```python
+# django.db.utils.ConnectionHandler
+
+class ConnectionHandler:
+    def __init__(self, databases=None):
+        """
+        databases is an optional dictionary of database definitions (structured
+        like settings.DATABASES).
+        """
+        self._databases = databases
+        self._connections = local()
+:
+    def __getitem__(self, alias):
+        if hasattr(self._connections, alias):
+            return getattr(self._connections, alias)
+
+        self.ensure_defaults(alias)
+        self.prepare_test_settings(alias)
+        db = self.databases[alias]
+        # @@ DBに応じたドライバクラスをimportする
+        # i.e. django.db.backends.sqlite3.base
+        backend = load_backend(db['ENGINE'])
+        conn = backend.DatabaseWrapper(db, alias)
+        # @@
+        # dbは設定のDict, aliasは設定名(default)
+        logger.debug('conn, db, alias {} {} {}'.format(conn, db, alias))
+        setattr(self._connections, alias, conn)
+        return conn
+```
+
+`django.db.backends.base.base.BaseDatabaseWrapper`を実装するクラスのインスタンスが戻る。
+SQLite3は`django.db.backends.sqlite3.base.DatabaseWrapper`
+
+##### 2. MigrationExecutorで整合性のチェックやファイル指定の判定
+
+```python
+        # @@ executorの取得
+        # migration_progress_callbackは進捗をstdoutにいい感じにだすための処理
+        # DBから状態を取り出し、適用をするクラス
+        executor = MigrationExecutor(connection, self.migration_progress_callback)
+```
+
+```python
+# django.db.migrations.executor.MigrationExecutor
+
+class MigrationExecutor:
+    """
+    End-to-end migration execution - load migrations and run them up or down
+    to a specified set of targets.
+    """
+
+    def __init__(self, connection, progress_callback=None):
+        self.connection = connection
+        # @@ makemigrationでも使っているローダ
+        # connectionを渡しているのでDBから読み込まれる
+        # Stateを作るため.今回はDBのMigrateテーブルから取得している
+        # Loaderの中でもRecorder使ってるけど
+        self.loader = MigrationLoader(self.connection)
+        # @@ Recorder
+        # 適用済のMigrationをDBに永続化する
+        # Migrationというモデルをもっていて、ORM経由でそこにしまっている
+        self.recorder = MigrationRecorder(self.connection)
+        # 進捗管理の関数
+        self.progress_callback = progress_callback
+```
+
+MigrationLoaderやMigrationRecorderはここでも出てきている
+
+```python
+        # Raise an error if any migrations are applied before their dependencies.
+        # @@
+        # executor.loaderはMigrationLoader
+        # 適用済マイグレーションのツリーの一貫性チェック
+        # 適用されているマイグレーションのparentがgraph.nodesにあるかを見ている
+        # どこかで辿りきれなくなっているのはまずいので。どこかで流れが変わっている可能性がある
+        executor.loader.check_consistent_history(connection)
+
+```
+
+
+
+```python
+        # Before anything else, see if there's conflicting apps and drop out
+        # hard if there are any
+        # @@ マイグレーションファイルのコンフリクトチェック
+        # 同じAppで複数のリーフが存在していないかを見ている
+        conflicts = executor.loader.detect_conflicts()
+        if conflicts:
+            name_str = "; ".join(
+                "%s in %s" % (", ".join(names), app)
+                for app, names in conflicts.items()
+            )
+            raise CommandError(
+                "Conflicting migrations detected; multiple leaf nodes in the "
+                "migration graph: (%s).\nTo fix them run "
+                "'python manage.py makemigrations --merge'" % name_str
+            )
+```
+
+makemigrationsでもしていた`check_consistent_history`や`detect_conflicts`を実行する
+
+
+##### 3. MigrationPlanの生成(migration fileのセットやbackwordの判定とか)
+
+```python
+        # @@
+        # 実際に適用すべきマイグレーションを決定する
+        plan = executor.migration_plan(targets)
+```
+
+targetsは各Appのリーフノードが基本
+`targets = [('admin', '0002_logentry_remove_auto_add'), ('app1', '0002_book_author'), ('auth', '0009_alter_user_last_name_max_length'), ('contenttypes', '0002_remove_content_type_name'), ('sessions', '0001_initial')]`
+
+
+```python
+# django.db.migrations.executor.MigrationExecutor#migration_plan
+    def migration_plan(self, targets, clean_start=False):
+        """
+        Given a set of targets, return a list of (Migration instance, backwards?).
+        """
+        # @@
+        # targets=[('admin', '0002_logentry_remove_auto_add'), ('app1', '0002_book_author'), ....]
+        plan = []
+        if clean_start:
+            applied = set()
+        else:
+            applied = set(self.loader.applied_migrations)
+        for target in targets:
+:
+            else:
+                for migration in self.loader.graph.forwards_plan(target):
+                    logger.debug('forwards_plan {} is applied {}'.format(migration, migration not in applied))
+                    if migration not in applied:
+                        plan.append((self.loader.graph.nodes[migration], False))
+                        applied.add(migration)
+```
+
+```python
+# django.db.migrations.graph.MigrationGraph#forwards_plan
+    def forwards_plan(self, target):
+        """
+        Given a node, return a list of which previous nodes (dependencies) must
+        be applied, ending with the node itself. This is the list you would
+        follow if applying the migrations to a database.
+        """
+        if target not in self.nodes:
+            raise NodeNotFoundError("Node %r not a valid node" % (target,), target)
+        # Use parent.key instead of parent to speed up the frequent hashing in ensure_not_cyclic
+        self.ensure_not_cyclic(target, lambda x: (parent.key for parent in self.node_map[x].parents))
+        self.cached = True
+        node = self.node_map[target]
+        try:
+            return node.ancestors()
+        except RuntimeError:
+            # fallback to iterative dfs
+            warnings.warn(RECURSION_DEPTH_WARNING, RuntimeWarning)
+            return self.iterative_dfs(node)
+```
+
+
+`plan = [(<Migration app1.0002_book_author>, False)]`
+
+
+##### 4. マイグレーション前のProjectStateを構成する
+
+```python
+        # @@ マイグレーション前のProjectStateを構成する
+        # 恐らく適用済の範囲だけっぽい
+        pre_migrate_state = executor._create_project_state(with_applied_migrations=True)
+        pre_migrate_apps = pre_migrate_state.apps
+        # @@ シグナルを投げる
+        # 最終的にinject_rename_contenttypes_operationsが呼ばれる
+        emit_pre_migrate_signal(
+            self.verbosity, self.interactive, connection.alias, apps=pre_migrate_apps, plan=plan,
+        )
+```
+
+```python
+# django/db/models/signals.py:52
+pre_migrate = Signal(providing_args=["app_config", "verbosity", "interactive", "using", "apps", "plan"])
+post_migrate = Signal(providing_args=["app_config", "verbosity", "interactive", "using", "apps", "plan"])
+
+```
+
+```python
+# django.contrib.contenttypes.apps.ContentTypesConfig
+class ContentTypesConfig(AppConfig):
+    name = 'django.contrib.contenttypes'
+    verbose_name = _("Content Types")
+
+    def ready(self):
+        pre_migrate.connect(inject_rename_contenttypes_operations, sender=self)
+        post_migrate.connect(create_contenttypes)
+        checks.register(check_generic_foreign_keys, checks.Tags.models)
+        checks.register(check_model_name_lengths, checks.Tags.models)
+```
+
+```python
+# django.contrib.contenttypes.management.inject_rename_contenttypes_operations
+def inject_rename_contenttypes_operations(plan=None, apps=global_apps, using=DEFAULT_DB_ALIAS, **kwargs):
+    """
+    Insert a `RenameContentType` operation after every planned `RenameModel`
+    operation.
+    """
+    if plan is None:
+        return
+
+    # Determine whether or not the ContentType model is available.
+    try:
+        ContentType = apps.get_model('contenttypes', 'ContentType')
+    except LookupError:
+        available = False
+    else:
+        if not router.allow_migrate_model(using, ContentType):
+            return
+        available = True
+
+    for migration, backward in plan:
+        if (migration.app_label, migration.name) == ('contenttypes', '0001_initial'):
+            # There's no point in going forward if the initial contenttypes
+            # migration is unapplied as the ContentType model will be
+            # unavailable from this point.
+            if backward:
+                break
+            else:
+                available = True
+                continue
+        # The ContentType model is not available yet.
+        if not available:
+            continue
+        inserts = []
+        for index, operation in enumerate(migration.operations):
+            if isinstance(operation, migrations.RenameModel):
+                operation = RenameContentType(
+                    migration.app_label, operation.old_name_lower, operation.new_name_lower
+                )
+                inserts.append((index + 1, operation))
+        for inserted, (index, operation) in enumerate(inserts):
+            migration.operations.insert(inserted + index, operation)
+```
+
+##### 5. マイグレーションの実行
+
+```python
+        # @@ migrateを実行する
+        post_migrate_state = executor.migrate(
+            targets, plan=plan, state=pre_migrate_state.clone(), fake=fake,
+            fake_initial=fake_initial,
+        )
+```
+
+```python
+# django.db.migrations.executor.MigrationExecutor#migrate
+    def migrate(self, targets, plan=None, state=None, fake=False, fake_initial=False):
+        :
+        :
+        elif all_forwards:
+            logger.debug('all_forwards')
+            if state is None:
+                logger.debug('state create')
+                # The resulting state should still include applied migrations.
+                state = self._create_project_state(with_applied_migrations=True)
+            # @@ migrate実行
+            state = self._migrate_all_forwards(state, plan, full_plan, fake=fake, fake_initial=fake_initial)
+```
+
+
+##### 6. マイグレーションの実行(2)
+
+```python
+# django.db.migrations.executor.MigrationExecutor#_migrate_all_forwards
+    def _migrate_all_forwards(self, state, plan, full_plan, fake, fake_initial):
+        """
+        Take a list of 2-tuples of the form (migration instance, False) and
+        apply them in the order they occur in the full_plan.
+        """
+        migrations_to_run = {m[0] for m in plan}
+        for migration, _ in full_plan:
+            if not migrations_to_run:
+                # We remove every migration that we applied from these sets so
+                # that we can bail out once the last migration has been applied
+                # and don't always run until the very end of the migration
+                # process.
+                break
+            if migration in migrations_to_run:
+                if 'apps' not in state.__dict__:
+                    if self.progress_callback:
+                        self.progress_callback("render_start")
+                    state.apps  # Render all -- performance critical
+                    if self.progress_callback:
+                        self.progress_callback("render_success")
+                # @@ 各Migrateの実行
+                state = self.apply_migration(state, migration, fake=fake, fake_initial=fake_initial)
+                migrations_to_run.remove(migration)
+
+        return state
+
+```
+
+
+
+
+```python
+    def apply_migration(self, state, migration, fake=False, fake_initial=False):
+        """Run a migration forwards."""
+        logger.debug('{} {}'.format(state, migration))
+        if self.progress_callback:
+            self.progress_callback("apply_start", migration, fake)
+        if not fake:
+            if fake_initial:
+                # Test to see if this is an already-applied initial migration
+                applied, state = self.detect_soft_applied(state, migration)
+                if applied:
+                    fake = True
+            if not fake:
+                # Alright, do it normally
+                # @@ ここがメインの処理
+                # sqlite3 ならdjango.db.backends.sqlite3.schema.DatabaseSchemaEditor
+                # migrationを各種DBにあわせてSQLを発行する
+                # 列追加ならmigrations.operations.filed.AddFiled
+                with self.connection.schema_editor(atomic=migration.atomic) as schema_editor:
+                    state = migration.apply(state, schema_editor)
+        # For replacement migrations, record individual statuses
+        if migration.replaces:
+            for app_label, name in migration.replaces:
+                self.recorder.record_applied(app_label, name)
+        else:
+            # @@ 適用済のマイグレーションをdjango_migrationsに記録する
+            self.recorder.record_applied(migration.app_label, migration.name)
+        # Report progress
+        if self.progress_callback:
+            self.progress_callback("apply_success", migration, fake)
+        return state
+```
+
+`migration.apply`は更に`migration.operations.database_forwards`に処理が移される.
+
+列追加であれば`AddField`
+
+```python
+
+class AddField(FieldOperation):
+    """Add a field to a model."""
+:
+    # @@ 列追加の場合の処理
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        to_model = to_state.apps.get_model(app_label, self.model_name)
+        # @@ __fake__.Book
+        logger.debug('add filed target model {}'.format(to_model))
+
+        if self.allow_migrate_model(schema_editor.connection.alias, to_model):
+            from_model = from_state.apps.get_model(app_label, self.model_name)
+            field = to_model._meta.get_field(self.name)
+            if not self.preserve_default:
+                field.default = self.field.default
+            # @@ ここでSQLを組み立てて実行する
+            # sqlite3 以外は結構デフォルト実装をみてるけど
+            # sqlite3だけやたら複雑
+            schema_editor.add_field(
+                from_model,
+                field,
+            )
+            if not self.preserve_default:
+                field.default = NOT_PROVIDED
+```
+
+SQLite3の場合
+
+```python
+# django.db.backends.sqlite3.schema.DatabaseSchemaEditor#add_field
+
+    def add_field(self, model, field):
+        """
+        Create a field on a model. Usually involves adding a column, but may
+        involve adding a table instead (for M2M fields).
+        """
+        # Special-case implicit M2M tables
+        if field.many_to_many and field.remote_field.through._meta.auto_created:
+            return self.create_model(field.remote_field.through)
+        logger.debug('{} to {}'.format(model, field))
+        self._remake_table(model, create_field=field)
+```
+
+_remake_tableはとても長いが条件を一部いじってテーブルを作り直している。
+
+たとえばPsycopgであれば`add_filed`は実装されておらずベースクラスそのままである。
+
+```python
+# django.db.backends.base.schema.BaseDatabaseSchemaEditor#add_field
+    def add_field(self, model, field):
+        """
+        Create a field on a model. Usually involves adding a column, but may
+        involve adding a table instead (for M2M fields).
+        """
+        # Special-case implicit M2M tables
+        if field.many_to_many and field.remote_field.through._meta.auto_created:
+            return self.create_model(field.remote_field.through)
+        # Get the column's definition
+        definition, params = self.column_sql(model, field, include_default=True)
+        # It might not actually have a column behind it
+        if definition is None:
+            return
+        # Check constraints can go on the column SQL here
+        db_params = field.db_parameters(connection=self.connection)
+        if db_params['check']:
+            definition += " CHECK (%s)" % db_params['check']
+        # Build the SQL and run it
+        sql = self.sql_create_column % {
+            "table": self.quote_name(model._meta.db_table),
+            "column": self.quote_name(field.column),
+            "definition": definition,
+        }
+        self.execute(sql, params)
+        # Drop the default if we need to
+        # (Django usually does not use in-database defaults)
+        if not self.skip_default(field) and self.effective_default(field) is not None:
+            changes_sql, params = self._alter_column_default_sql(model, None, field, drop=True)
+            sql = self.sql_alter_column % {
+                "table": self.quote_name(model._meta.db_table),
+                "changes": changes_sql,
+            }
+            self.execute(sql, params)
+        # Add an index, if required
+        self.deferred_sql.extend(self._field_indexes_sql(model, field))
+        # Add any FK constraints later
+        if field.remote_field and self.connection.features.supports_foreign_keys and field.db_constraint:
+            self.deferred_sql.append(self._create_fk_sql(model, field, "_fk_%(to_table)s_%(to_column)s"))
+        # Reset connection if required
+        if self.connection.features.connection_persists_old_columns:
+            self.connection.close()
+```
+
+mysqlもほぼおなじだがdefaqult値に対する追加の処理があるのでオーバライドされている。
+
+```python
+    def add_field(self, model, field):
+        super().add_field(model, field)
+
+        # Simulate the effect of a one-off default.
+        # field.default may be unhashable, so a set isn't used for "in" check.
+        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):
+            effective_default = self.effective_default(field)
+            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {
+                'table': self.quote_name(model._meta.db_table),
+                'column': self.quote_name(field.column),
+            }, [effective_default])
+```
